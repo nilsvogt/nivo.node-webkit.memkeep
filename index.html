@@ -1,0 +1,843 @@
+<!--
+	NOTE:
+	directory[n] = some/path/that/also/could/be/a/symlink
+	cache[some/path/that/also/could/be/a/symlink].custom_path contains the resolved symlinkpath
+
+	Todo:
+	- persisted cache (shared for all finderview insances)
+	- [strg+TAB] => focus next findervier [shift+strg+TAB] => focus prev findervier
+
+	In Progress:
+	- Context menu
+		- Make context menu an instance of finderview
+			- implement datasource and delegate for the finderview in order to make it more reusable
+
+	Done:
+	- InputRouter
+	- sorted resultList
+	- flexbox
+	- submit querystring should execute first result in filtered resultlist
+	- :shell [open cwd in terminal]
+	- leading '?' searches in the cache
+	- AbstractFeature / FeatureProvider
+-->
+<!DOCTYPE html>
+<html ng-app="app">
+	<head>
+		<title>nivo</title>
+		<link rel="stylesheet" xhref="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.1/css/font-awesome.min.css">
+		<link x-href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+		<style type="text/css">
+			/* reset */
+			* {
+				margin: 0; padding: 0; outl_ine: 1px dashed blue;
+			}
+			*, *:before, *:after {
+				box-sizing: border-box;
+			}
+			*:focus { outline: none; }
+			ul { list-style-type: none; }
+
+			/*scrollbar*/
+			*::-webkit-scrollbar-corner {
+				background-color: transparent;
+			}
+			*::-webkit-scrollbar {
+				width: 5px; height: 9px;
+			}
+
+			*::-webkit-scrollbar-thumb {
+				background-color: rgba(0,0,0,0.2); -webkit-box-shadow: inset 1px 1px 0 rgba(0,0,0,0.10),inset 0 -1px 0 rgba(0,0,0,0.07);
+			}
+
+			/* generals */
+			html, body {
+				height: 100%; font-size: 1px;
+			}
+			body {
+				font-family: 'Roboto', sans-serif; background: #f7f7f7;
+				font-size: 16rem;
+			}
+			a { text-decoration: none; }
+
+			context-menu div:first-child { overflow: hidden; height: 30rem; font-size: 14rem; color: #EB5424; padding: 9rem 12rem;; }
+			context-menu { position: absolute; top: 75rem; bottom: 40px; left: 20px; right: 20px; bottom: 20px; background: rgba(0,0,0,0.8); }
+			context-menu ul { height: calc(100% - 30rem ); overflow-y: auto; padding: 10rem 0; }
+			context-menu ul li a { display: block; color: #fff; padding: 0 10rem; }
+			context-menu ul li a:hover { background: #555; }
+			context-menu ul li a:focus { background: #999; }
+		</style>
+	</head>
+
+	<body ng-controller="AppCtrl">
+
+		<main-view>
+		</main-view>
+
+		<scr_ipt src="angular.1.6.1.js"></script>
+		<script> "use strict";
+
+			var angular = require('angular');
+			var app = angular.module('app', []);
+
+			app.value('node_path', require('path'));
+			app.value('nw_gui', require('nw.gui'));
+			
+			app.value('fs', require('fs'));
+
+			app.provider('credentials', [function() {
+
+				this.path = null;
+
+				/**
+				 * Load the credentials file
+				 */
+				var Credentials = function(path, filesystem) {
+					// the path to the credentials file
+					this.path = path;
+
+					this.filesystem = filesystem;
+				}
+
+				Credentials.prototype.load = function() {
+					var path = this.path;
+
+					if (!this.filesystem.existsSync(path)) {
+						throw 'File "' + path + '" containing the credentials was not found';
+					}
+					
+					return this.filesystem.readFileSync(path, 'utf8');
+				}
+
+				this.$get = function(fs){
+					return new Credentials(this.path, fs).load();
+				}
+			}])
+
+            // Load native UI library
+			var gui = require('nw.gui'); //or global.window.nwDispatcher.requireNwGui() (see https://github.com/rogerwang/node-webkit/issues/707)
+
+			// Get the current window
+			var win = gui.Window.get();
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #FEATURE HANDLER
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.provider('features', function(){
+				var featurelist = {};
+				//var featurelist = new Map();
+
+				this.registerFeature = function(feature){
+					// featurelist.push(feature.cmd, {
+					// 	cmd: feature.cmd,
+					// 	action: function(){ feature.instance.process.apply(feature.instance, arguments) },
+					// 	title: feature.title
+					// });
+
+					// return;
+					featurelist[feature.cmd] = {
+						cmd: feature.cmd,
+						action: function(){ feature.instance.process.apply(feature.instance, arguments) },
+						title: feature.title
+					};
+				};
+
+				this.$get = function(){
+
+					var Features = function(featurelist){
+						this.featurelist = featurelist;
+					};
+
+					Features.prototype.getAllForPath = function(path){
+						// return this.featurelist.filter(function(feature){
+						// 	return feature.canProcess(path);
+						// });
+						return this.featurelist;
+					};
+
+					Features.prototype.hasFeature = function(feature_name){
+						return this.featurelist[feature_name] !== undefined;
+					}
+
+					return new Features(featurelist);
+				}
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #INPUT ROUTER
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.provider('inputRouter', function(){
+				var routes = [];
+
+				this.register = function(regex, handler){
+					routes.push({rule: regex, handler: handler});
+				}
+
+				this.$get = ['features', function(features){
+					var InputRouter = function(routes){
+						this.routes = routes || [];
+					}
+
+					InputRouter.prototype.handle = function(input, directory, cache, scope){
+						var
+							resultList = [],
+							matches = null;
+
+						// find and call appropriate route for passed input
+						for(var i = 0; i < this.routes.length; i++){
+							var route = this.routes[i];
+							if(matches = input.match(route.rule)){
+								resultList = route.handler.call(null, input, directory, cache, matches, scope, features);
+								break;
+							}
+						}
+
+						return resultList;
+					}
+
+					InputRouter.prototype.register = function(regex, handler){
+						this.routes.push({rule: regex, handler: handler});
+					};
+
+					return new InputRouter(routes);
+				}]
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #DATASOURCE
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.provider('dataSource', function() {	
+				var DataSource = function(credentials){
+					this.useMock = true;
+					this.credentials = credentials;
+					this.gsjson = require('google-spreadsheet-to-json');
+				};
+
+				DataSource.prototype.retreive = function() {
+					if (this.useMock) {
+						return this.getDummyData();
+					} else {
+						return this.getData()
+					}
+				};
+
+				DataSource.prototype.getDummyData = function() {
+					var worksheetA = [
+						{"title":"golem","tags":"it news","content":"http://golem.de"},
+						{"title":"heise","tags":"it news","content":"http://heise.de"}
+					];
+
+					var worksheetB = [
+						{"title":"golem","tags":"it news","content":"http://golem.de"},
+						{"title":"heise","tags":"it news","content":"http://heise.de"}
+					];
+
+					var worksheets = [worksheetA, worksheetB];
+
+					return new Promise(function(resolve, reject) {
+						resolve(worksheets);
+					});
+				};
+
+				DataSource.prototype.getData = function() {
+					return this.gsjson({
+						spreadsheetId: '1FHs5ZsplYJBozmxYNaD7dVt8iyJQV7SGhoRP94tvKHo',
+						credentials: this.credentials,
+						allWorksheets: true
+					})
+				};
+
+				this.$get = ['credentials', function(credentials) {
+					return new DataSource(credentials);
+				}];
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #CONTEXT MENU
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.directive('contextMenu', ()=>{
+				return {
+					controller: function($scope, $element, features){
+						var path_current = null;
+						/**
+						 * Provides the menu to the view
+						 * @param  string path The path we are about to present the contextmenu for
+						 * @return void
+						 */
+						$scope.showMenu = function(path){
+							$scope.working_directory = path;
+
+							path_current = path;
+							var menu = features.getAllForPath(path);
+
+							if(menu.length === 0) return;
+
+							$scope.menu = menu;
+							focusFirstAction();
+						}
+
+						$scope.closeMenu = function(){
+							$scope.menu = null;
+						}
+
+						$scope.perform  = function(action){
+							action(path_current);
+							$scope.closeMenu();
+						}
+
+						function focusFirstAction(){
+							setTimeout(function(){
+								$element[0].querySelector('li:first-child a').focus();
+							});
+						}
+					},
+					link: function(scope){
+						/*
+						 * TODO: toggle class 'active' for item at hand on open/close menu so user still recognizes the item we are presenting the context menu for
+						 */
+						// open contextmenu on [ctrl+enter]
+						document.addEventListener('keydown', function(e){
+							if(e.ctrlKey && e.code === 'Enter'){
+								e.preventDefault();
+
+								var target = document.activeElement;
+								if(target.classList.contains('finderview__item')){
+									var path = target.title;
+									scope.showMenu(path);
+									scope.$apply();
+								}
+							}
+						});
+						// open contextmenu on right mouse click
+						document.addEventListener('contextmenu', function(e) {
+							if(e.target.classList.contains('finderview__item')) {
+								e.preventDefault();
+								var path = e.target.title;
+								scope.showMenu(path);
+								scope.$apply();
+							}
+
+							return false;
+						});
+
+						document.addEventListener('keydown', function(e){
+							if(e.code === 'Escape'){
+								scope.closeMenu();
+								scope.$apply();
+							}
+						});
+					}
+				}
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #MAIN VIEW
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.component('mainView', {
+				template: `
+					<main style="height: 100%; display: flex; flex-direction: row;">   
+						<finder-view 
+							class="finderview" 
+							finderview-instance-id="finderId" 
+							foobar="$ctrl.foo" 
+							on-entry-select="$ctrl.setEntry(entry)">
+						</finder-view>
+
+						<detail-view entry="$ctrl.selectedEntry"></detail-view>
+					</main>
+				`,
+				//template: '<main ng-transclude>    </main>',
+				
+				//transclude: true,
+				//replace: true,
+				
+				controller: function(){
+					var vm = this;
+
+					vm.selectedEntry = null;
+
+					vm.setEntry = function setEntry(entry) {
+						vm.selectedEntry = entry;
+					}
+				}
+			})
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #DETAIL VIEW
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.component('detailView', {
+				template: '<div class="detailView">selectedEntry: {{$ctrl.entry}} {{$ctrl.entry.title}} </div>',
+				bindings: {
+					entry: '<'
+				},
+				controller: function(){
+					var vm = this,
+						styles = `
+							detail-view { flex-grow: 1; width: 0; }
+							.detailView { background: #ccc; height: 100%; }
+						`;
+
+					vm.$onInit = function(){
+						initStyles();
+						console.log('INIT DETAIL VIEW', this)
+					}
+
+					function initStyles() {
+						var styleElement = document.createElement('style');
+						styleElement.innerHTML = styles;
+						document.head.appendChild(styleElement);
+					}
+				}
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #FINDER VIEW
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.directive('finderView', ['inputRouter', 'dataSource', (inputRouter, dataSource)=>{
+
+				/**
+				 * Those styles get appended to the head only once
+				 */
+				var styles = `
+					<style id="finderViewStyles">
+						.finderview { height: 100%; flex-grow: 1; width: 0; overflow: hidden;}
+						.finderview > ul { height: calc(100% - 65rem - 30rem); overflow-y: auto; padding: 10rem 0; border-left: 1px dashed #ccc; }
+						.finderview > ul li { white-space: nowrap; text-overflow: ellipsis; width: 100%; overflow: hidden; }
+						.finderview > ul li a { display: block; padding: 0 0 0 0; }
+						.finderview > ul li:nth-child(even) a {background: #e6e6e6}
+						.finderview > ul li a:hover { background: rgba(0,0,0,0.1); }
+						.finderview > ul li a:focus { background: #EB5424; color: #fff; }
+						.finderview > ul li a:before { content: attr(data-i); display: inline-block; font-size: 16rem; width: 2em; color: #999; bac_kground: #F0F2F1; text-align: right; }
+
+						.finderview > div:first-child { position: relative; overflow: hidden; height: 65rem; }
+						.finderview > div:first-child [ng-model="querystring"] { display: block; margin: 29rem 0 0 0; width: 100%; height: 34rem; padding: 6rem 12rem; font-size: 14rem; line-height: 1.42857143; color: #555; background-color: #fff; border: 1px solid #ccc; border-right: 0; box-shadow: inset 0 1px 1px rgba(0,0,0,.075); color: #EB5424 }
+						.finderview > div:first-child span { position: absolute; min-width: 100%; top: 0; right: 0; display: block; padding: 9rem 12rem; height: 29rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12rem; background: #222228; color: #EB5424;}
+
+						.finderview > div:last-child  { height: 30rem; overflow: hidden; text-overflow: ellipsis;  padding: 5rem;}
+
+						.finderview__item--isDirectory { color: #555; }
+						.finderview__item--isFile { color: #0786C5; }
+						.finderview__item--isFile:hover { color: #0786C5 }
+						.finderview__item--isSymbolicLink { color: red; }
+					</style>`;
+
+				/**
+				 * Template for every instance of finderView directive
+				 */
+				var template = `
+						<div>
+							<form ng-submit="submitSearch()">
+								<span title="{{directory_path}}">{{directory_path}}</span>
+								<input type="text" placeholder="What are you looking for?" ng-model="querystring" />
+							</form>
+						</div>
+						<ul>
+							<li ng-repeat="(i, node) in viewResultList">
+								<a href="#" data-i="{{i}}" ng-click="onSelectRow(node)" title="{{node}}" class="finderview__item">
+									<i class="fa fa-folder-o"></i>
+									{{node.title}} | {{node.tags}}
+								</a>
+							</li>
+						</ul>
+						<div style="color: #555; font-size: 12rem; box-shadow: 0 0 3px rgba(0, 0, 0, 0.2); padding: 9rem">
+							Matches: {{viewResultList.length}}
+						</div>
+					`;
+
+				return {
+					scope:{
+						finderviewInstanceId: "=", // unique id for the localStorage,
+						onEntrySelect: "&",
+						foobar: "="
+					},
+					template: template,
+					controller: function($scope, $element, node_path, nw_gui, dataSource){
+
+						var data = undefined;
+						var selectedIndex = 0;
+
+						dataSource.retreive().then(function(fetchedData)
+						{
+							// merge list of arrays into one array
+							// Array.prototype.concat.apply([], [[1], [2], [3]])
+							data = Array.prototype.concat.apply([], fetchedData);
+							
+							$scope.viewResultList = data;
+							$scope.$apply();
+						});
+
+						$scope.onSelectRow = function(entry){
+							$scope.onEntrySelect({entry: entry});
+						};
+
+						var
+							directory = [], // contains a list of fullpaths for the directory recently read
+							$input = $element[0].querySelector('[ng-model="querystring"]'); // userinput-field for the querystring we utilize to filter the output
+
+						$scope.viewResultList = []; // the list of results presented in the view
+
+						////////////////////////////////////////////////////////////////////////////////////
+						//// #VIEWS RESULT-LIST
+						////////////////////////////////////////////////////////////////////////////////////
+
+						$scope.onQuerystringChange = function(new_value, old_value)
+						{
+							if(new_value === old_value) return;
+
+							var resultList = inputRouter.handle(new_value, data);
+
+							if(resultList !== null){
+								$scope.viewResultList = resultList;
+							}
+						}
+
+						////////////////////////////////////////////////////////////////////////////////////
+						//// #QUERY-INPUT FIELD
+						////////////////////////////////////////////////////////////////////////////////////
+
+						/**
+						 * Called once the user is about to type anything
+						 */
+						$scope.focusInput = function()
+						{
+							 $input.focus();
+						}
+
+						$scope.onFocusInput = function()
+						{
+							// once the user focuses the search field none listItem is selected anymore
+							selectedIndex = undefined;
+						}
+
+						////////////////////////////////////////////////////////////////////////////////////
+						//// #USER NAVIGATION ACTIONS
+						////////////////////////////////////////////////////////////////////////////////////
+
+						/**
+						 * TODO: abstract the way a node is focused and use index derectly here 
+						 *       to retreive the focused element
+						 */
+						$scope.selectFocusedNode = function()
+						{
+							if (selectedIndex === undefined) {
+								return;
+							}
+
+							var focusedEntry = $scope.viewResultList[selectedIndex];
+
+							selectEntry(focusedEntry);
+						}
+
+						/**
+						 * select first item in resultlist when search was submitted
+						 */
+						$scope.submitSearch = function()
+						{
+							if(!$scope.viewResultList.length) return;
+
+							var firstEntry = $scope.viewResultList[0];
+
+							selectEntry(firstEntry);
+						}
+
+						/**
+						 * 
+						 */
+						function selectEntry(entry) 
+						{
+							document.title = entry.title;
+
+							$scope.onEntrySelect({entry: firstEntry});
+						}
+
+
+						////////////////////////////////////////////////////////////////////////////////////
+						//// #CONTROLS
+						////////////////////////////////////////////////////////////////////////////////////
+
+						$scope.focusNextNode = function()
+						{
+							var listItems = [].slice.call($element[0].querySelector('ul').children),
+								nextListItem = null;
+
+							selectedIndex = ++selectedIndex % listItems.length || 0;
+							console.log(selectedIndex)
+							
+							nextListItem = listItems[selectedIndex];
+
+							nextListItem.querySelector('a').focus();
+						}
+
+
+						$scope.focusPreviousNode = function()
+						{
+							var listItems = [].slice.call($element[0].querySelector('ul').children),
+								prevListItem = null,
+								length = listItems.length;
+
+							selectedIndex = selectedIndex || 0; // make sure it is not undefined
+
+							selectedIndex = ((--selectedIndex%length)+length)%length;
+							
+							prevListItem = listItems[selectedIndex];
+
+							prevListItem.querySelector('a').focus();
+						}
+
+					},
+					link: function(scope, element){
+						var $input = element[0].querySelector('[ng-model="querystring"]');
+
+						// handle focus of searchStringInput
+						$input.addEventListener('focus', scope.onFocusInput);
+
+						// handle [UP] and [DOWN] keys
+						element[0].addEventListener('keydown', function(e){
+							if (e.keyCode === 16) return; // shiftleft + shiftright
+							if (e.code === 'Tab') return; // Tab is used natively
+							if (e.code === 'Enter') return; // prevent form from being submitted (To be honest, I dont relly know why the form should get submitted but it does so when we do not return here..)
+
+							if (e.keyCode === 38) { // up
+								e.preventDefault(); // prevent from triggering scrolling the scrollbar
+								scope.focusPreviousNode();
+							} else if(e.keyCode === 40) { // down
+								e.preventDefault(); // prevent from triggering scrolling the scrollbar
+								scope.focusNextNode();
+							} else if(e.keyCode === 39) { // right
+								scope.selectFocusedNode();
+							} else if(e.which !== 0 && !e.ctrlKey && !e.metaKey && !e.altKey) { // handle all printable characters
+								scope.focusInput();
+							}
+
+							scope.$apply();
+						});
+
+						scope.$watch('querystring', scope.onQuerystringChange);
+
+						// insert CSS only once
+						if(document.querySelector('#finderViewStyles') === null){
+							document.head.insertAdjacentHTML( 'beforeend', styles );
+						}
+					}
+				};
+			}]);
+			
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #APP
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.controller('AppCtrl', function ($scope, $element) {
+				
+				// handle ctrl+1, ctrl+2, ctrl+3, ctrl+4 to update amount of finderViewInsatnces
+				var gridKeys = [1, 2, 3, 4];
+				$element[0].addEventListener('keydown', function(e){
+					if(e.ctrlKey && gridKeys.indexOf(parseInt(String.fromCharCode(e.keyCode))) !== -1){
+						// on shortcut
+						$scope.$apply();
+					}
+				});
+			});
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #FEATURES
+			////////////////////////////////////////////////////////////////////////////////////
+
+			class AbstractFeature {
+				constructor(){
+					if (new.target === AbstractFeature) {
+						throw new TypeError("Cannot construct Abstract instances directly");
+					}
+
+					if (typeof this.canProcess !== 'function') {
+						throw new TypeError("Must override method 'canProcess'");
+					}
+
+					if (typeof this.process !== 'function') {
+						throw new TypeError("Must override method 'process'");
+					}
+				}
+			}
+
+			var featurelist = [];
+
+			/*
+			 * Feature: OpenInShell
+			 */
+			(function(featurelist){
+				const node_fs = require('fs');
+				const node_os = require('os');
+				const node_child_process = require('child_process');
+
+				class FeatureOpenInShell extends AbstractFeature {
+					constructor(fullpath){
+						super();
+					}
+					canProcess(fullpath){
+						var nodeInfo;
+						try{
+							nodeInfo = node_fs.lstatSync(fullpath); // some files are not accessible since they are provided by the underlaying OS
+						}catch(err){
+							console.error(err, fullpath);
+							return false;
+						}
+
+						// we only want to open directories in a shell
+						if(!nodeInfo.isDirectory()){
+							console.info('You can not open other than directories in a shell');
+							return false;
+						}
+
+						var supported_os = ['win32', 'win64', 'darwin', 'linux'];
+
+						var platform = node_os.platform();
+
+						if(supported_os.indexOf(platform) === -1){
+							console.error('featureOpenInShell does not support platform '+platform);
+							return false;
+						}
+
+						// since we know we will be able to perform the action we can set the path now
+						this.directory = fullpath;
+						return true;
+					}
+					process(fullpath){
+						this.openInShell(fullpath);
+					}
+					openInShell(fullpath){
+						if(!this.canProcess(fullpath)) return;
+
+						var cmd, directory = this.directory, platform = node_os.platform();;
+
+						// escape directory
+						directory = directory.replace(/(["\s'$`\\])/g,'\\$1');
+
+						if (platform === 'win32' || platform === 'win64') { // WIN
+							cmd = "START cmd.exe /k cd " + directory;
+						} else if (platform === 'darwin') { // OSX
+							cmd = "open -a Terminal " + directory;
+						} else if (platform === 'linux') { // LINUX
+							cmd = "xterm -e 'cd " + directory+"'";
+						}
+
+						// invoke cmd
+						node_child_process.exec(cmd);
+					}
+				};
+
+				featurelist.push({cmd: 'shell', title: 'Open directory in shell', instance: new FeatureOpenInShell()});
+			}(featurelist));
+
+			/*
+			 * Feature: OpenInFolder
+			 */
+			(function(featurelist){
+				const nw_gui = require('nw.gui');
+
+				class FeatureOpenInFolder extends AbstractFeature {
+					constructor(){
+						super();
+					}
+					canProcess(fullpath){
+						return true;
+					}
+					process(fullpath){
+						this.openInFolder(fullpath);
+					}
+					openInFolder(fullpath){
+						nw_gui.Shell.showItemInFolder(fullpath);
+					}
+				}
+
+				featurelist.push({cmd: 'folder', title: 'Open in parent folder', instance: new FeatureOpenInFolder()});
+			}(featurelist));
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #CONFIG & BOOTSTRAP
+			////////////////////////////////////////////////////////////////////////////////////
+
+			angular.module('app').config(['featuresProvider', 'inputRouterProvider', 'dataSourceProvider', 'credentialsProvider', function(featuresProvider, inputRouterProvider, dataSourceProvider, credentialsProvider) {
+
+				// assign the path to the creds.json file
+				credentialsProvider.path = 'creds.json';
+
+				/*
+				 * load all features
+				 */
+				for(var i = 0; i < featurelist.length; i++){
+					var feature = featurelist[i];
+					featuresProvider.registerFeature(feature);
+				}
+
+				/*
+				 * register all routes
+				 */
+
+				/*
+				// action route (invoke a feature by typing in the corresponging command e.g. :shell )
+				inputRouterProvider.register(/^:(.*)$/, function(searchstring, directory, cache, matches, scope, features){
+					var cmd = matches[1];
+
+					if(features.featurelist[cmd] !== undefined){ // TODO: CMD will never be found cause it is not the featurename
+						features.featurelist[cmd].action(scope.directory_path);
+						scope.resetQueryString();
+					}
+					return null;
+				});
+
+				// change volume >d: | >c:
+				inputRouterProvider.register(/^>(.*)$/, function(searchstring, directory, cache, matches, scope){
+					var event_set_path = new CustomEvent('app/path_change', {detail: {path: matches[1]}});
+					document.dispatchEvent(event_set_path);
+					return null;
+				});
+
+				// Search in cache
+				inputRouterProvider.register(/^\?(.*)$/, function(searchstring, directory, cache, matches){
+					searchstring = matches[1];
+					var filtered = [];
+
+					for(var path in cache){
+						if (new RegExp('^.*'+searchstring+'[^\\\\]*$', 'i').test(path)) {
+							filtered.push(path);
+						}
+					}
+
+					return filtered;
+				});
+					*/
+				// Simple list filter that reduces the shown resultlist to items matching the searchstring entered by the user
+				inputRouterProvider.register(/^.*$/, function(searchstring, haystack, cache, matches){
+					var filtered = [];
+
+					for (var i = 0; i < haystack.length; i++) {
+						var item = haystack[i];
+
+
+						if (new RegExp('^.*'+searchstring+'[^\\\\]*$', 'i').test(item.title)) {
+							filtered.push(item);
+						} else if (new RegExp('^.*'+searchstring+'[^\\\\]*$', 'i').test(item.tags)) {
+							filtered.push(item);
+						}
+					}
+
+					return filtered;
+				});
+
+				// configure datasource
+				// .. pass in flag indicating dev-mode
+			}]);
+
+			angular.element(function() {
+				angular.bootstrap(document, ['app']);
+			});
+		</script>
+	</body>
+</html>

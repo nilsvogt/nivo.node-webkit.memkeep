@@ -13,7 +13,7 @@
 			- implement datasource and delegate for the finderview in order to make it more reusable
 
 	Done:
-	- InputRouter
+	- InputRouterchrome-extension://ihmbmcffpmfoaaeceodjaocdhaikklcd/index.html#
 	- sorted resultList
 	- flexbox
 	- submit querystring should execute first result in filtered resultlist
@@ -25,9 +25,14 @@
 <html ng-app="app">
 	<head>
 		<title>nivo</title>
-		<link rel="stylesheet" xhref="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.1/css/font-awesome.min.css">
 		<link x-href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+		
+		<link rel="stylesheet" href="node_modules/font-awesome/css/font-awesome.min.css">
+		<link rel="stylesheet" href="node_modules/github-markdown-css/github-markdown.css" />
 		<style type="text/css">
+			
+			html, body { height: 100%; }
+			body { padding: 10px; background: transparent; outline: 1px solid #ccc; }
 			/* reset */
 			* {
 				margin: 0; padding: 0; outl_ine: 1px dashed blue;
@@ -55,17 +60,19 @@
 				height: 100%; font-size: 1px;
 			}
 			body {
-				font-family: 'Roboto', sans-serif; background: #f7f7f7;
+				font-family: 'Roboto', sans-serif; 
 				font-size: 16rem;
 			}
 			a { text-decoration: none; }
 
 			context-menu div:first-child { overflow: hidden; height: 30rem; font-size: 14rem; color: #EB5424; padding: 9rem 12rem;; }
 			context-menu { position: absolute; top: 75rem; bottom: 40px; left: 20px; right: 20px; bottom: 20px; background: rgba(0,0,0,0.8); }
-			context-menu ul { height: calc(100% - 30rem ); overflow-y: auto; padding: 10rem 0; }
+			context-menu ul { height: 100% - 30rem ); overflow-y: auto; padding: 10rem 0; }
 			context-menu ul li a { display: block; color: #fff; padding: 0 10rem; }
 			context-menu ul li a:hover { background: #555; }
 			context-menu ul li a:focus { background: #999; }
+
+			.markdown-body { padding: 30rem; }
 		</style>
 	</head>
 
@@ -82,9 +89,41 @@
 
 			app.value('node_path', require('path'));
 			app.value('nw_gui', require('nw.gui'));
-			
 			app.value('fs', require('fs'));
 
+
+			var MarkdownIt = require('markdown-it'),
+			    md = new MarkdownIt();
+			app.value('md', md);
+
+			/**
+			 * Filter to render the markdown we mainly use in the detailview
+			 */
+			app.filter('markdown', function () {
+				return function (item) {
+					return md.render(item);
+				};
+			});
+
+			/**
+			 * Filter to explicitly trust content as html which we mainly use in the detailview
+			 */
+			app.filter('trustHtml', ['$sce', function($sce) {
+				return function(htmlCode) {
+					return $sce.trustAsHtml(htmlCode);
+				}
+			}]);
+			/*
+			app.filter('renderTags', ['$sce', function(){
+				return function(string) {
+					return '<li>' + string + '</li>';
+				}
+			}])
+			*/
+			/**
+			 * Provides the credentials we need to authenticate a service user to gain access
+			 * to the worksheet the data is being stored
+			 */
 			app.provider('credentials', [function() {
 
 				this.path = null;
@@ -226,7 +265,7 @@
 
 				DataSource.prototype.getDummyData = function() {
 					var worksheetA = [
-						{"title":"golem","tags":"it news","content":"http://golem.de"},
+						{"title":"golem","tags":"it news, bookmark","content":"http://golem.de"},
 						{"title":"heise","tags":"it news","content":"http://heise.de"}
 					];
 
@@ -235,7 +274,11 @@
 						{"title":"heise","tags":"it news","content":"http://heise.de"}
 					];
 
-					var worksheets = [worksheetA, worksheetB];
+					var commandsSheet = [
+						{"title":":open workspace","tags":"","content":"pwd"}
+					];
+
+					var worksheets = [worksheetA, worksheetB, commandsSheet];
 
 					return new Promise(function(resolve, reject) {
 						resolve(worksheets);
@@ -334,14 +377,45 @@
 				}
 			});
 
+			app.provider('NativeWindowService', function() {
+
+				/**
+				 * Update the size of the native view
+				 */
+				class NativeWindowService {
+					constructor(win, screenSize) {
+						this.win = win;
+						this.screenSize = screenSize;
+					}
+
+					/**
+					 * Update size of view and center the window in the screen
+					 */
+					applySize(width, height) {
+						this.win.width = width;
+						this.win.height = height;
+						this.win.x = Math.floor((this.screenSize.width - width) / 2);
+						this.win.y = Math.floor((this.screenSize.height - height) / 2);
+					}
+				}
+				
+				this.$get = function() {
+					nw.Screen.Init();
+					var screenSize = nw.Screen.screens[0].work_area;
+					var win = nw.Window.get();
+				
+					return new NativeWindowService(win, screenSize);
+				}
+			});
+
 			////////////////////////////////////////////////////////////////////////////////////
 			//// #MAIN VIEW
 			////////////////////////////////////////////////////////////////////////////////////
 
 			app.component('mainView', {
 				template: `
-					<main style="height: 100%; display: flex; flex-direction: row;">   
-						<finder-view 
+					<main>   
+						<finder-view
 							class="finderview" 
 							finderview-instance-id="finderId" 
 							foobar="$ctrl.foo" 
@@ -351,41 +425,364 @@
 						<detail-view entry="$ctrl.selectedEntry"></detail-view>
 					</main>
 				`,
-				//template: '<main ng-transclude>    </main>',
-				
-				//transclude: true,
-				//replace: true,
-				
-				controller: function(){
-					var vm = this;
-
+				controller: ['$scope', 'NativeWindowService', function($scope, nativeWindowService){
+					
+					var vm = this,
+						styles = `
+							main-view { display: block; widht: 100%; height: 100%; overflow: hidden; box-shadow: 0px 0 10px #000; }
+							main { position: relative; height: 100%; overflow: scroll; background: #f7f7f7; }
+							main::-webkit-scrollbar { display: none; }
+						`;
+						
 					vm.selectedEntry = null;
 
-					vm.setEntry = function setEntry(entry) {
+					vm.setEntry = setEntry;
+					vm.$onInit  = $onInit;
+
+					function $onInit() {
+
+						initStyles();
+						
+						resetEntry();
+
+						document.body.addEventListener('keydown', function(e) {	
+							if (e.key !== 'Escape') {
+								return;
+							}
+
+							resetEntry();
+							$scope.$apply();
+						});
+					}
+
+					/**
+					 * Append styles for this component to the dom
+					 */
+					function initStyles() {
+						var styleElement = document.createElement('style');
+						styleElement.innerHTML = styles;
+						document.head.appendChild(styleElement);
+					}
+
+					/**
+					 * Apply the window size to be small enough to display the finderview
+					 */
+					function applyFinderSize() {
+						nativeWindowService.applySize(600, 400);
+					}
+
+					/**
+					 * Apply the window size to be big enough to display the detailview
+					 */
+					function applyDetailviewSize() {
+						nativeWindowService.applySize(800, 800);
+					}
+
+					/**
+					 * Ensure no entry is selected
+					 */
+					function resetEntry() {
+						vm.setEntry(null);
+					}
+
+					/**
+					 * Assign an entry and update window size accordingly
+					 */
+					function setEntry(entry) {
+						if (entry === null) {
+							applyFinderSize();
+						} else {
+							applyDetailviewSize();
+						}
+
 						vm.selectedEntry = entry;
 					}
-				}
+				}]
 			})
 
+
+			////////////////////////////////////////////////////////////////////////////////////
+			//// #FINDER VIEW
+			////////////////////////////////////////////////////////////////////////////////////
+
+			app.component('finderView', {
+				template: `
+					<div>
+						<form ng-submit="$ctrl.submitSearch()">
+							<i class="fa fa-search"></i>
+							<input type="text" placeholder="Search..." ng-model="$ctrl.querystring" />
+						</form>
+					</div>
+					<ul>
+						<li ng-repeat="(i, node) in $ctrl.viewResultList">
+							<a href="#"  
+								ng-click="$ctrl.selectEntry(node)"  
+								class="finderview__item">
+								
+								<span>
+									<i class="fa fa-sticky-note-o"></i>
+									{{node.title}}
+								</span>
+								
+								<ul class="tags" ng-If="node.tags">
+									<li ng-repeat="tag in $ctrl.explodeTags(node.tags)">
+										{{tag}}
+									</li>
+								</ul>
+							</a>
+						</li>
+					</ul>
+					<div style="color: #555; font-size: 12rem; box-shadow: 0 0 3px rgba(0, 0, 0, 0.2); padding: 9rem">
+						Matches: {{$ctrl.viewResultList.length}}
+					</div>
+				`,
+				bindings:{
+					finderviewInstanceId: "=", // unique id for the localStorage,
+					onEntrySelect: "&",
+					foobar: "="
+				},
+				controller: function(inputRouter, dataSource, $scope, $element){
+
+					var vm = this;
+					/**
+					 * {object|undefined} The data fetched by the dataSource
+					 */
+					var data = undefined;
+
+					/**
+					 * {int} The index of the currently highlighted list-item in the finderview 
+					 */
+					var selectedIndex = 0;
+
+					/**
+					 * {DomElement|undefined} userinput-field for the querystring we utilize to filter the output
+					 */
+					var $input = undefined;
+					
+					/**
+					 * Those styles get appended to the head only once
+					 */
+					var styles = `
+						<style id="finderViewStyles">
+							.finderview { display: block; height: 100%; overflow: hidden;}
+							.finderview > ul { height: calc(100% - 40rem - 30rem); overflow-y: auto; padding: 10rem 0; }
+							.finderview > ul > li { white-space: nowrap; text-overflow: ellipsis; width: 100%; overflow: hidden; background: rgba(255,255,255,0.1); }
+							.finderview > ul > li a { display: block; padding: 6rem 10rem; color: #555; border-left: 5px solid transparent; }
+							.finderview > ul > li:nth-child(even) a { background: rgba(0,0,0,0.04); }
+
+							.finderview > ul > li a:hover,
+							.finderview > ul > li a:focus { background: rgba(0,0,0,0.5); border-left-color: #5fba7d; color: #fff; }
+							
+							.finderview > ul > li a span { display: block; margin: 0 0 10rem; }
+							.finderview > ul > li a span:last-child { margin: 0; }
+
+							.finderview > div:first-child { position: relative; overflow: hidden; height: 40rem; }
+
+							.finderview form { position: relative; height: 40rem; }
+							.finderview form i.fa { width: 50rem; font-size: 20rem; line-height: 39rem; text-align: center; color: #9fa2b5; color: #5fba7d; }
+							.finderview form input[ng-model="$ctrl.querystring"] {
+								position: absolute; top: 0; left: 0; 
+								display: block; width: 100%; height: 40rem; padding: 6rem 16rem 6rem 46rem; 
+								font-size: 14rem; line-height: 1.42857143; border: none; border-bottom: 1px solid #ddd; color: #333; color: #428257; background: transparent; 
+							}
+							.finderview form input[ng-model="querystring"]::-webkit-input-placeholder { color: #333; }
+
+							.finderview > div:last-child  { height: 30rem; overflow: hidden; text-overflow: ellipsis;  padding: 5rem;}
+
+							.finderview ul.tags li { display: inline-block; margin: 0 7rem 0 0; padding: 5rem 6rem; font-size: 12px; background: #E1ECF4; color: #39739d; }
+						</style>
+					`;
+
+					/**
+					 * the list of results presented in the view
+					 */
+					vm.viewResultList = [];
+
+					vm.focusInput        = focusInput;
+					vm.onFocusInput      = resetSelectedIndex;
+					vm.processUserInput  = processUserInput;
+					vm.selectFocusedNode = selectFocusedNode;
+					vm.submitSearch      = selectFirstEntry;
+					vm.focusNextNode     = focusNextNode;
+					vm.focusPreviousNode = focusPreviousNode;
+					vm.selectEntry 		 = selectEntry;
+
+					this.$onInit = function() {
+
+						// fetch data
+						dataSource
+							.retreive()
+							.then(function(fetchedData) {
+								// TODO: remove loading indicator
+
+								// merge list of arrays into one array
+								// Array.prototype.concat.apply([], [[1], [2], [3]])
+								data = Array.prototype.concat.apply([], fetchedData);
+								
+								vm.viewResultList = data;
+
+								$scope.$apply();
+							});
+
+						$input = $element[0].querySelector('[ng-model="$ctrl.querystring"]');
+
+						// handle focus of searchStringInput
+						$input.addEventListener('focus', vm.onFocusInput);
+
+						// handle [UP] and [DOWN] keys
+						$element[0].addEventListener('keydown', function(e){
+							if (e.keyCode === 16) return; // shiftleft + shiftright
+							if (e.code === 'Tab') return; // Tab is used natively
+							if (e.code === 'Enter') return; // prevent form from being submitted (To be honest, I dont relly know why the form should get submitted but it does so when we do not return here..)
+
+							if (e.keyCode === 38) { // up
+								e.preventDefault(); // prevent from triggering scrolling the scrollbar
+								vm.focusPreviousNode();
+							} else if(e.keyCode === 40) { // down
+								e.preventDefault(); // prevent from triggering scrolling the scrollbar
+								vm.focusNextNode();
+							} else if(e.keyCode === 39) { // right
+								vm.selectFocusedNode();
+							} else if(e.which !== 0 && !e.ctrlKey && !e.metaKey && !e.altKey) { // handle all printable characters
+								vm.focusInput();
+							}
+
+							$scope.$apply();
+						});
+
+						$scope.$watch('$ctrl.querystring', vm.processUserInput);
+
+						// insert CSS only once
+						if(document.querySelector('#finderViewStyles') === null){
+							document.head.insertAdjacentHTML( 'beforeend', styles );
+						}
+					}
+					
+					/**
+					 * Explode a string by delimiter ',' and trim whitespace afterwards
+					 */
+					vm.explodeTags = function(tags) {
+						return tags
+							.split(',')
+							.map(function(tag) { 
+								return tag.trim(); 
+							});
+					}
+
+					////////////////////////////////////////////////////////////////////////////////////
+					//// #QUERY-INPUT FIELD
+					////////////////////////////////////////////////////////////////////////////////////
+
+					function focusInput() {
+						 $input.focus();
+					}
+
+					function resetSelectedIndex() {
+						// once the user focuses the search field none listItem is selected anymore
+						selectedIndex = undefined;
+					}
+
+					function processUserInput(new_value, old_value) {
+						if(new_value === old_value) return;
+
+						var resultList = inputRouter.handle(new_value, data);
+
+						if(resultList !== null){
+							vm.viewResultList = resultList;
+						}
+					}
+
+					////////////////////////////////////////////////////////////////////////////////////
+					//// #CONTROLS SELECT
+					////////////////////////////////////////////////////////////////////////////////////
+
+					function selectFocusedNode() {
+						if (selectedIndex === undefined) {
+							return;
+						}
+
+						var focusedEntry = vm.viewResultList[selectedIndex];
+						
+						selectEntry(focusedEntry);
+					}
+
+					function selectFirstEntry() {
+						if (!vm.viewResultList.length) {
+							return;
+						}
+
+						var firstEntry = vm.viewResultList[0];
+
+						selectEntry(firstEntry);
+					}
+
+					function selectEntry(entry) {
+
+						// TODO: Feature-Routing :)
+						// cmdOpenWorkspace();
+						
+						vm.onEntrySelect({entry: entry});
+					}
+
+					////////////////////////////////////////////////////////////////////////////////////
+					//// #CONTROLS UP/DOWN
+					////////////////////////////////////////////////////////////////////////////////////
+
+					function focusNextNode() {
+						var listItems = [].slice.call($element[0].querySelector('ul').children),
+							nextListItem = null;
+
+						selectedIndex = ++selectedIndex % listItems.length || 0;
+						
+						nextListItem = listItems[selectedIndex];
+
+						nextListItem.querySelector('a').focus();
+					}
+
+					function focusPreviousNode() {
+						var listItems = [].slice.call($element[0].querySelector('ul').children),
+							prevListItem = null,
+							length = listItems.length;
+
+						selectedIndex = selectedIndex || 0; // make sure it is not undefined
+
+						selectedIndex = ((--selectedIndex%length)+length)%length;
+						
+						prevListItem = listItems[selectedIndex];
+
+						prevListItem.querySelector('a').focus();
+					}
+
+				}
+			})
+			
 			////////////////////////////////////////////////////////////////////////////////////
 			//// #DETAIL VIEW
 			////////////////////////////////////////////////////////////////////////////////////
 
 			app.component('detailView', {
-				template: '<div class="detailView">selectedEntry: {{$ctrl.entry}} {{$ctrl.entry.title}} </div>',
+				template: `
+					<div class="detailView"
+						ng-class="{'active': $ctrl.entry !== null}">
+
+						<h1>{{$ctrl.entry.title}}</h1>
+						<div class="markdown-body" ng-bind-html="$ctrl.entry.content | markdown | trustHtml"></div>
+					</div>
+				`,
 				bindings: {
 					entry: '<'
 				},
 				controller: function(){
 					var vm = this,
 						styles = `
-							detail-view { flex-grow: 1; width: 0; }
-							.detailView { background: #ccc; height: 100%; }
+							.detailView { display: none; position: absolute; top: 0; left: 0; width: 100%; min-height: 100%; background: #fff; }
+							.detailView.active { display: block; }
+							.detailView > h1 { padding: 30rem 30rem 0 30rem; }
 						`;
 
 					vm.$onInit = function(){
 						initStyles();
-						console.log('INIT DETAIL VIEW', this)
+						console.log('INIT DETAIL VIEW', vm.entry)
 					}
 
 					function initStyles() {
@@ -395,240 +792,6 @@
 					}
 				}
 			});
-
-			////////////////////////////////////////////////////////////////////////////////////
-			//// #FINDER VIEW
-			////////////////////////////////////////////////////////////////////////////////////
-
-			app.directive('finderView', ['inputRouter', 'dataSource', (inputRouter, dataSource)=>{
-
-				/**
-				 * Those styles get appended to the head only once
-				 */
-				var styles = `
-					<style id="finderViewStyles">
-						.finderview { height: 100%; flex-grow: 1; width: 0; overflow: hidden;}
-						.finderview > ul { height: calc(100% - 65rem - 30rem); overflow-y: auto; padding: 10rem 0; border-left: 1px dashed #ccc; }
-						.finderview > ul li { white-space: nowrap; text-overflow: ellipsis; width: 100%; overflow: hidden; }
-						.finderview > ul li a { display: block; padding: 0 0 0 0; }
-						.finderview > ul li:nth-child(even) a {background: #e6e6e6}
-						.finderview > ul li a:hover { background: rgba(0,0,0,0.1); }
-						.finderview > ul li a:focus { background: #EB5424; color: #fff; }
-						.finderview > ul li a:before { content: attr(data-i); display: inline-block; font-size: 16rem; width: 2em; color: #999; bac_kground: #F0F2F1; text-align: right; }
-
-						.finderview > div:first-child { position: relative; overflow: hidden; height: 65rem; }
-						.finderview > div:first-child [ng-model="querystring"] { display: block; margin: 29rem 0 0 0; width: 100%; height: 34rem; padding: 6rem 12rem; font-size: 14rem; line-height: 1.42857143; color: #555; background-color: #fff; border: 1px solid #ccc; border-right: 0; box-shadow: inset 0 1px 1px rgba(0,0,0,.075); color: #EB5424 }
-						.finderview > div:first-child span { position: absolute; min-width: 100%; top: 0; right: 0; display: block; padding: 9rem 12rem; height: 29rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12rem; background: #222228; color: #EB5424;}
-
-						.finderview > div:last-child  { height: 30rem; overflow: hidden; text-overflow: ellipsis;  padding: 5rem;}
-
-						.finderview__item--isDirectory { color: #555; }
-						.finderview__item--isFile { color: #0786C5; }
-						.finderview__item--isFile:hover { color: #0786C5 }
-						.finderview__item--isSymbolicLink { color: red; }
-					</style>`;
-
-				/**
-				 * Template for every instance of finderView directive
-				 */
-				var template = `
-						<div>
-							<form ng-submit="submitSearch()">
-								<span title="{{directory_path}}">{{directory_path}}</span>
-								<input type="text" placeholder="What are you looking for?" ng-model="querystring" />
-							</form>
-						</div>
-						<ul>
-							<li ng-repeat="(i, node) in viewResultList">
-								<a href="#" data-i="{{i}}" ng-click="onSelectRow(node)" title="{{node}}" class="finderview__item">
-									<i class="fa fa-folder-o"></i>
-									{{node.title}} | {{node.tags}}
-								</a>
-							</li>
-						</ul>
-						<div style="color: #555; font-size: 12rem; box-shadow: 0 0 3px rgba(0, 0, 0, 0.2); padding: 9rem">
-							Matches: {{viewResultList.length}}
-						</div>
-					`;
-
-				return {
-					scope:{
-						finderviewInstanceId: "=", // unique id for the localStorage,
-						onEntrySelect: "&",
-						foobar: "="
-					},
-					template: template,
-					controller: function($scope, $element, node_path, nw_gui, dataSource){
-
-						var data = undefined;
-						var selectedIndex = 0;
-
-						dataSource.retreive().then(function(fetchedData)
-						{
-							// merge list of arrays into one array
-							// Array.prototype.concat.apply([], [[1], [2], [3]])
-							data = Array.prototype.concat.apply([], fetchedData);
-							
-							$scope.viewResultList = data;
-							$scope.$apply();
-						});
-
-						$scope.onSelectRow = function(entry){
-							$scope.onEntrySelect({entry: entry});
-						};
-
-						var
-							directory = [], // contains a list of fullpaths for the directory recently read
-							$input = $element[0].querySelector('[ng-model="querystring"]'); // userinput-field for the querystring we utilize to filter the output
-
-						$scope.viewResultList = []; // the list of results presented in the view
-
-						////////////////////////////////////////////////////////////////////////////////////
-						//// #VIEWS RESULT-LIST
-						////////////////////////////////////////////////////////////////////////////////////
-
-						$scope.onQuerystringChange = function(new_value, old_value)
-						{
-							if(new_value === old_value) return;
-
-							var resultList = inputRouter.handle(new_value, data);
-
-							if(resultList !== null){
-								$scope.viewResultList = resultList;
-							}
-						}
-
-						////////////////////////////////////////////////////////////////////////////////////
-						//// #QUERY-INPUT FIELD
-						////////////////////////////////////////////////////////////////////////////////////
-
-						/**
-						 * Called once the user is about to type anything
-						 */
-						$scope.focusInput = function()
-						{
-							 $input.focus();
-						}
-
-						$scope.onFocusInput = function()
-						{
-							// once the user focuses the search field none listItem is selected anymore
-							selectedIndex = undefined;
-						}
-
-						////////////////////////////////////////////////////////////////////////////////////
-						//// #USER NAVIGATION ACTIONS
-						////////////////////////////////////////////////////////////////////////////////////
-
-						/**
-						 * TODO: abstract the way a node is focused and use index derectly here 
-						 *       to retreive the focused element
-						 */
-						$scope.selectFocusedNode = function()
-						{
-							if (selectedIndex === undefined) {
-								return;
-							}
-
-							var focusedEntry = $scope.viewResultList[selectedIndex];
-
-							selectEntry(focusedEntry);
-						}
-
-						/**
-						 * select first item in resultlist when search was submitted
-						 */
-						$scope.submitSearch = function()
-						{
-							if(!$scope.viewResultList.length) return;
-
-							var firstEntry = $scope.viewResultList[0];
-
-							selectEntry(firstEntry);
-						}
-
-						/**
-						 * 
-						 */
-						function selectEntry(entry) 
-						{
-							document.title = entry.title;
-
-							$scope.onEntrySelect({entry: firstEntry});
-						}
-
-
-						////////////////////////////////////////////////////////////////////////////////////
-						//// #CONTROLS
-						////////////////////////////////////////////////////////////////////////////////////
-
-						$scope.focusNextNode = function()
-						{
-							var listItems = [].slice.call($element[0].querySelector('ul').children),
-								nextListItem = null;
-
-							selectedIndex = ++selectedIndex % listItems.length || 0;
-							console.log(selectedIndex)
-							
-							nextListItem = listItems[selectedIndex];
-
-							nextListItem.querySelector('a').focus();
-						}
-
-
-						$scope.focusPreviousNode = function()
-						{
-							var listItems = [].slice.call($element[0].querySelector('ul').children),
-								prevListItem = null,
-								length = listItems.length;
-
-							selectedIndex = selectedIndex || 0; // make sure it is not undefined
-
-							selectedIndex = ((--selectedIndex%length)+length)%length;
-							
-							prevListItem = listItems[selectedIndex];
-
-							prevListItem.querySelector('a').focus();
-						}
-
-					},
-					link: function(scope, element){
-						var $input = element[0].querySelector('[ng-model="querystring"]');
-
-						// handle focus of searchStringInput
-						$input.addEventListener('focus', scope.onFocusInput);
-
-						// handle [UP] and [DOWN] keys
-						element[0].addEventListener('keydown', function(e){
-							if (e.keyCode === 16) return; // shiftleft + shiftright
-							if (e.code === 'Tab') return; // Tab is used natively
-							if (e.code === 'Enter') return; // prevent form from being submitted (To be honest, I dont relly know why the form should get submitted but it does so when we do not return here..)
-
-							if (e.keyCode === 38) { // up
-								e.preventDefault(); // prevent from triggering scrolling the scrollbar
-								scope.focusPreviousNode();
-							} else if(e.keyCode === 40) { // down
-								e.preventDefault(); // prevent from triggering scrolling the scrollbar
-								scope.focusNextNode();
-							} else if(e.keyCode === 39) { // right
-								scope.selectFocusedNode();
-							} else if(e.which !== 0 && !e.ctrlKey && !e.metaKey && !e.altKey) { // handle all printable characters
-								scope.focusInput();
-							}
-
-							scope.$apply();
-						});
-
-						scope.$watch('querystring', scope.onQuerystringChange);
-
-						// insert CSS only once
-						if(document.querySelector('#finderViewStyles') === null){
-							document.head.insertAdjacentHTML( 'beforeend', styles );
-						}
-					}
-				};
-			}]);
-			
 
 			////////////////////////////////////////////////////////////////////////////////////
 			//// #APP
@@ -735,6 +898,12 @@
 				featurelist.push({cmd: 'shell', title: 'Open directory in shell', instance: new FeatureOpenInShell()});
 			}(featurelist));
 
+			function cmdOpenWorkspace() {
+				const node_child_process = require('child_process');
+				let cmd = "start c:\\Programme\\Git\\git-bash.exe";
+				var foo = node_child_process.exec(cmd);
+			}
+
 			/*
 			 * Feature: OpenInFolder
 			 */
@@ -763,7 +932,10 @@
 			//// #CONFIG & BOOTSTRAP
 			////////////////////////////////////////////////////////////////////////////////////
 
-			angular.module('app').config(['featuresProvider', 'inputRouterProvider', 'dataSourceProvider', 'credentialsProvider', function(featuresProvider, inputRouterProvider, dataSourceProvider, credentialsProvider) {
+			angular.module('app').config(['featuresProvider', 'inputRouterProvider', 'dataSourceProvider', 'credentialsProvider', '$logProvider', function(featuresProvider, inputRouterProvider, dataSourceProvider, credentialsProvider, $logProvider) {
+
+				// enable logs
+				$logProvider.debugEnabled(true);
 
 				// assign the path to the creds.json file
 				credentialsProvider.path = 'creds.json';

@@ -1,16 +1,23 @@
 {
-  "name": "finder",
+  "name": "memkeep",
   "main": "index.html",
   "version": "0.1.0",
-  "description": "testproject",
+  "description": "A litte gadget to easily search for your notes that are suppossed to be managed in a google spreadsheet",
+  "window": {
+    "frame": false,
+    "transparent": true
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "author": "Nils Vogt",
   "license": "ISC",
   "dependencies": {
     "angular": "latest",
+    "font-awesome": "^4.7.0",
+    "github-markdown-css": "^2.10.0",
     "google-spreadsheet-to-json": "^1.0.0",
+    "markdown-it": "^8.4.0",
     "simple-encryptor": "^1.1.1"
   }
 }

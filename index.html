@@ -596,6 +596,10 @@
 
                     this.$onInit = function() {
 
+                        $input = $element[0].querySelector('[ng-model="$ctrl.querystring"]');
+                        
+                        focusInput();
+
                         // fetch data
                         dataSource
                             .retreive()
@@ -613,8 +617,6 @@
                             }, function(err) {
                                 console.log(err);
                             });
-
-                        $input = $element[0].querySelector('[ng-model="$ctrl.querystring"]');
 
                         // handle [UP] and [DOWN] keys
                         $element[0].addEventListener('keydown', function(e){
@@ -648,7 +650,7 @@
                     }
                     
                     /**
-                     * Explode a string by delimiter ',' and trim whitespace afterwards
+                     * Explode a string by delimiter ',' and trim whitespace afterwards for all exploded nodes
                      */
                     vm.explodeTags = function(tags) {
                         return tags
@@ -781,11 +783,15 @@
             //// #APP
             ////////////////////////////////////////////////////////////////////////////////////
 
-            app.controller('AppCtrl', function ($scope, $element, win, NativeWindowService, nw) {
+
+
+            app.controller('AppCtrl', function ($scope, $element, win, nw) {
                 
                 initTrayIcon();
 
                 registerGlobalShortcut();
+
+                initExternalLinkHandler();
 
                 /**
                  * Bring app to front when corresponding shortcut was pressed
@@ -793,7 +799,6 @@
                 function registerGlobalShortcut() {
                     let option = {
                         key : "Ctrl+Shift+Space",
-
                     };
 
                     let shortcut = new nw.Shortcut(option);
@@ -818,7 +823,6 @@
 
                     trayIcon.on('click', function() {
                         win.show();
-                        NativeWindowService.applySize(600, 400);
                     });
 
                     // As for now we use a timeout so this eventlistener is registered
@@ -830,15 +834,55 @@
                                 return;
                             }
 
-                            win.minimize();
+                            win.hide();
                         });
                     }, 0);
 
-                    // remove the programm from the tasklist since it is supposed be be 
-                    // activated from the tray icon
-                    win.on('minimize', function(e) {
-                        this.hide();
+
+                    let menu = new nw.Menu();
+                    
+                    let menuItemDevTools = new nw.MenuItem({ type: 'normal', label: 'show dev tools' });
+
+                    menuItemDevTools.on('click', function() {
+                        win.showDevTools();
                     });
+                    
+                    menu.append(menuItemDevTools);
+
+
+                    let menuItemClose = new nw.MenuItem({ type: 'normal', label: 'close' });
+
+                    menuItemClose.on('click', function() {
+                        win.close();
+                    });
+                    
+                    menu.append(menuItemClose);
+
+
+                    trayIcon.menu = menu;
+                }
+
+                /**
+                 * Open links in a new window
+                 */
+                function initExternalLinkHandler() {
+                    document.body.addEventListener('click', function(e){
+                        let target = e.target;
+
+                        if (target.nodeName !== 'A') {
+                            return
+                        }
+
+                        let isRemoteLink = target.href.substring(0,4) === 'http' || target.href.substring(0,2) === '//';
+
+                        if (!isRemoteLink) {
+                            return;
+                        }
+
+                        e.preventDefault();
+
+                        nw.Window.open(target.href)
+                    })
                 }
             });
 

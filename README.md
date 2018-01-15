@@ -4,19 +4,19 @@ A litte gadget to easily search for your notes that are suppossed to be managed 
 
 ## Installation
 
-`npm install`
+1. `npm install`
 
-download the latest [nwjs](https://nwjs.io/) sdk
+2. download the latest [nwjs](https://nwjs.io/) sdk
 
 ## Creating a service-account 
 
-You must create a service-account to share your spreadsheets with so this app will be capable of reading your the spreadsheets while they are still not public to the web.
+You must create a service-account to share your spreadsheets with so this app will be capable of reading your spreadsheets while they are still not public to the web.
 
 Once you have successfully created a [service account](https://www.google.de/search?q=google+create+service+account) you can download a json file (creds.json) containing the credentials for that service account. Once you placed a copy into the app folder you are ready to build and run the application.
 
 ## Build and Run
 
-Hit the run.bat or run.sh to build a debug version
+Hit the `run.bat` or `run.sh` to build a debug version
 
 ## Notes
 

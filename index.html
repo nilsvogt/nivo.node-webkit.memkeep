@@ -1,25 +1,8 @@
 <!--
-    NOTE:
-    directory[n] = some/path/that/also/could/be/a/symlink
-    cache[some/path/that/also/could/be/a/symlink].custom_path contains the resolved symlinkpath
-
     Todo:
-    - persisted cache (shared for all finderview insances)
-    - [strg+TAB] => focus next findervier [shift+strg+TAB] => focus prev findervier
-
-    In Progress:
-    - Context menu
-        - Make context menu an instance of finderview
-            - implement datasource and delegate for the finderview in order to make it more reusable
-
-    Done:
-    - InputRouterchrome-extension://ihmbmcffpmfoaaeceodjaocdhaikklcd/index.html#
-    - sorted resultList
-    - flexbox
-    - submit querystring should execute first result in filtered resultlist
-    - :shell [open cwd in terminal]
-    - leading '?' searches in the cache
-    - AbstractFeature / FeatureProvider
+    - cache results
+    - button, trayicon-menu, shortcut to invalidate cache
+    - router
 -->
 <!DOCTYPE html>
 <html ng-app="app">
@@ -104,7 +87,15 @@
              */
             app.filter('markdown', function () {
                 return function (item) {
-                    return md.render(item);
+                    let content;
+
+                    try {
+                        content = md.render(item);
+                    } catch (exception) {
+                        content = '';
+                    }
+
+                    return content;
                 };
             });
 
@@ -738,6 +729,10 @@
                     function focusSelectedNode() {
                         let listItems = [].slice.call($element[0].querySelector('ul').children),
                             selectedListItem = listItems[vm.selectedIndex];
+
+                        if (selectedListItem === undefined) {
+                            return;
+                        }
 
                         selectedListItem.querySelector('a').focus();
                     }

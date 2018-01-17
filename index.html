@@ -66,6 +66,9 @@
 
         <script> "use strict";
 
+            // hold a reference to the window so it will not garbage collected when minimized in tray
+            let win = nw.Window.get();
+
             let angular = require('angular');
             
             let app = angular.module('app', []);
